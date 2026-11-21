@@ -3,12 +3,16 @@ package vn.herotran.tvremote
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -23,7 +27,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -48,6 +55,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -57,7 +65,66 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private val QUICK_MESSAGES = listOf("Tắt TV đi ngủ thôi!", "Ra ăn cơm!", "Học bài đi con!", "Hết giờ xem TV rồi!")
+private val BtnShape = RoundedCornerShape(8.dp)
+private val BtnPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)
+
+private val ColBlue = Color(0xFF1E88E5)
+private val ColGreen = Color(0xFF2E9E5B)
+private val ColOrange = Color(0xFFEF6C00)
+private val ColRed = Color(0xFFD32F2F)
+private val ColPurple = Color(0xFF7E57C2)
+private val ColTeal = Color(0xFF00897B)
+
+/** Nút chữ nhật bo góc nhẹ: filled = nền đặc, ngược lại = viền màu. */
+@Composable
+private fun ColorButton(
+    onClick: () -> Unit,
+    color: Color,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    filled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val m = modifier.heightIn(min = 48.dp)
+    if (filled) {
+        Button(
+            onClick = onClick,
+            modifier = m,
+            enabled = enabled,
+            shape = BtnShape,
+            contentPadding = BtnPadding,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = color,
+                contentColor = Color.White,
+                disabledContainerColor = color.copy(alpha = 0.45f),
+                disabledContentColor = Color.White.copy(alpha = 0.75f),
+            ),
+            content = content,
+        )
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = m,
+            enabled = enabled,
+            shape = BtnShape,
+            contentPadding = BtnPadding,
+            border = BorderStroke(1.5.dp, color),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = color),
+            content = content,
+        )
+    }
+}
+
+@Composable
+private fun BtnText(text: String) {
+    Text(
+        text = text,
+        maxLines = 1,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center,
+    )
+}
 
 @Composable
 fun RemoteScreen(vm: RemoteViewModel) {
@@ -81,7 +148,7 @@ fun RemoteScreen(vm: RemoteViewModel) {
         }
     }
     LaunchedEffect(Unit) {
-        if (ui.deviceId.isBlank()) showSettings = true
+        if (ui.dbUrl.isBlank() || ui.dbUrl.contains("YOUR-PROJECT")) showSettings = true
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -94,6 +161,42 @@ fun RemoteScreen(vm: RemoteViewModel) {
         ) {
             TopSection(ui, onSettings = { showSettings = true })
 
+            // ---------------- Giám sát màn hình (đầu trang)
+            SectionCard("Giám sát màn hình TV") {
+                ColorButton(
+                    onClick = { vm.requestScreenshot() },
+                    color = ColBlue,
+                    enabled = !ui.screenshotLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (ui.screenshotLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        BtnText("Đang chụp...")
+                    } else {
+                        BtnText("Chụp màn hình TV")
+                    }
+                }
+                val shot = ui.screenshot
+                if (shot != null) {
+                    Image(
+                        bitmap = shot.asImageBitmap(),
+                        contentDescription = "Ảnh chụp màn hình TV",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(shot.width.toFloat() / shot.height.toFloat())
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showFullImage = true },
+                    )
+                    Text("Bấm vào ảnh để xem toàn màn hình / lưu", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
             // ---------------- Nguồn & bảo mật
             SectionCard("Nguồn & bảo mật") {
                 val st = ui.status
@@ -103,17 +206,14 @@ fun RemoteScreen(vm: RemoteViewModel) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = { vm.lock() }, modifier = Modifier.weight(1f)) { Text("Khóa TV") }
-                    OutlinedButton(onClick = { vm.unlock() }, modifier = Modifier.weight(1f)) { Text("Mở khóa TV") }
+                    ColorButton(onClick = { vm.lock() }, color = ColOrange, modifier = Modifier.weight(1f)) { BtnText("Khóa TV") }
+                    ColorButton(onClick = { vm.unlock() }, color = ColGreen, modifier = Modifier.weight(1f)) { BtnText("Mở khóa TV") }
                 }
-                Button(
+                ColorButton(
                     onClick = { showPowerConfirm = true },
+                    color = ColRed,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError,
-                    ),
-                ) { Text("Tắt nguồn TV") }
+                ) { BtnText("Tắt nguồn TV") }
             }
 
             // ---------------- Âm thanh
@@ -125,11 +225,9 @@ fun RemoteScreen(vm: RemoteViewModel) {
                     if (!dragging && st != null) sliderVal = st.volume.toFloat()
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(onClick = { vm.volDown() }, modifier = Modifier.weight(1f)) { Text("Giảm -") }
-                    OutlinedButton(onClick = { vm.mute() }, modifier = Modifier.weight(1f)) {
-                        Text(if (st?.muted == true) "Bật tiếng" else "Tắt tiếng")
-                    }
-                    OutlinedButton(onClick = { vm.volUp() }, modifier = Modifier.weight(1f)) { Text("Tăng +") }
+                    ColorButton(onClick = { vm.volDown() }, color = ColBlue, modifier = Modifier.weight(1f)) { BtnText("Giảm âm") }
+                    ColorButton(onClick = { vm.mute() }, color = ColPurple, modifier = Modifier.weight(1f)) { BtnText("Mute") }
+                    ColorButton(onClick = { vm.volUp() }, color = ColBlue, modifier = Modifier.weight(1f)) { BtnText("Tăng âm") }
                 }
                 Text("Âm lượng: ${sliderVal.roundToInt()}%", style = MaterialTheme.typography.bodyMedium)
                 Slider(
@@ -143,6 +241,10 @@ fun RemoteScreen(vm: RemoteViewModel) {
                         vm.setVolume(sliderVal.roundToInt())
                     },
                     valueRange = 0f..100f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = ColBlue,
+                        activeTrackColor = ColBlue,
+                    ),
                 )
             }
 
@@ -152,25 +254,15 @@ fun RemoteScreen(vm: RemoteViewModel) {
                     value = messageText,
                     onValueChange = { messageText = it },
                     modifier = Modifier.fillMaxWidth(),
+                    shape = BtnShape,
                     label = { Text("Nội dung tin nhắn") },
                     maxLines = 3,
                 )
-                Button(
-                    onClick = {
-                        vm.sendMessage(messageText)
-                    },
+                ColorButton(
+                    onClick = { vm.sendMessage(messageText) },
+                    color = ColTeal,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Gửi") }
-                QUICK_MESSAGES.chunked(2).forEach { pair ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        pair.forEach { m ->
-                            OutlinedButton(
-                                onClick = { vm.sendMessage(m) },
-                                modifier = Modifier.weight(1f),
-                            ) { Text(m, fontSize = 13.sp) }
-                        }
-                    }
-                }
+                ) { BtnText("Gửi") }
             }
 
             // ---------------- Hẹn giờ
@@ -178,60 +270,36 @@ fun RemoteScreen(vm: RemoteViewModel) {
                 Text(scheduleText(ui.status), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     listOf(15, 30, 45, 60).forEach { m ->
-                        if (ui.selMinutes == m) {
-                            Button(onClick = { vm.selectMinutes(m) }, modifier = Modifier.weight(1f)) { Text("${m}p") }
-                        } else {
-                            OutlinedButton(onClick = { vm.selectMinutes(m) }, modifier = Modifier.weight(1f)) { Text("${m}p") }
+                        ColorButton(
+                            onClick = { vm.selectMinutes(m) },
+                            color = ColTeal,
+                            filled = ui.selMinutes == m,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("$m", fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                Text("min", fontSize = 12.sp, maxLines = 1)
+                            }
                         }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    if (ui.selAction == "LOCK_NOW") {
-                        Button(onClick = { vm.selectAction("LOCK_NOW") }, modifier = Modifier.weight(1f)) { Text("Khóa TV") }
-                        OutlinedButton(onClick = { vm.selectAction("POWER_OFF") }, modifier = Modifier.weight(1f)) { Text("Tắt TV") }
-                    } else {
-                        OutlinedButton(onClick = { vm.selectAction("LOCK_NOW") }, modifier = Modifier.weight(1f)) { Text("Khóa TV") }
-                        Button(onClick = { vm.selectAction("POWER_OFF") }, modifier = Modifier.weight(1f)) { Text("Tắt TV") }
-                    }
+                    ColorButton(
+                        onClick = { vm.selectAction("LOCK_NOW") },
+                        color = ColBlue,
+                        filled = ui.selAction == "LOCK_NOW",
+                        modifier = Modifier.weight(1f),
+                    ) { BtnText("Khóa TV") }
+                    ColorButton(
+                        onClick = { vm.selectAction("POWER_OFF") },
+                        color = ColBlue,
+                        filled = ui.selAction == "POWER_OFF",
+                        modifier = Modifier.weight(1f),
+                    ) { BtnText("Tắt TV") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = { vm.startSchedule() }, modifier = Modifier.weight(1f)) { Text("Bắt đầu hẹn giờ") }
-                    OutlinedButton(onClick = { vm.cancelSchedule() }, modifier = Modifier.weight(1f)) { Text("Hủy hẹn giờ") }
-                }
-            }
-
-            // ---------------- Giám sát màn hình
-            SectionCard("Giám sát màn hình TV") {
-                Button(
-                    onClick = { vm.requestScreenshot() },
-                    enabled = !ui.screenshotLoading,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (ui.screenshotLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("Đang chụp...")
-                    } else {
-                        Text("Chụp màn hình TV")
-                    }
-                }
-                val shot = ui.screenshot
-                if (shot != null) {
-                    Image(
-                        bitmap = shot.asImageBitmap(),
-                        contentDescription = "Ảnh chụp màn hình TV",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(shot.width.toFloat() / shot.height.toFloat())
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { showFullImage = true },
-                    )
-                    Text("Bấm vào ảnh để xem toàn màn hình / lưu", style = MaterialTheme.typography.bodySmall)
+                    ColorButton(onClick = { vm.startSchedule() }, color = ColGreen, modifier = Modifier.weight(1f)) { BtnText("Bắt đầu hẹn giờ") }
+                    ColorButton(onClick = { vm.cancelSchedule() }, color = ColRed, filled = false, modifier = Modifier.weight(1f)) { BtnText("Hủy hẹn giờ") }
                 }
             }
 
@@ -241,8 +309,8 @@ fun RemoteScreen(vm: RemoteViewModel) {
                     Text("TV đang hiển thị ảnh", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = { picker.launch("image/*") }, modifier = Modifier.weight(1f)) { Text("Chọn & gửi ảnh") }
-                    OutlinedButton(onClick = { vm.hideImage() }, modifier = Modifier.weight(1f)) { Text("Tắt ảnh trên TV") }
+                    ColorButton(onClick = { picker.launch("image/*") }, color = ColPurple, modifier = Modifier.weight(1f)) { BtnText("Chọn & gửi ảnh") }
+                    ColorButton(onClick = { vm.hideImage() }, color = ColRed, filled = false, modifier = Modifier.weight(1f)) { BtnText("Tắt ảnh trên TV") }
                 }
             }
 
@@ -276,11 +344,10 @@ fun RemoteScreen(vm: RemoteViewModel) {
 
     if (showSettings) {
         SettingsDialog(
-            deviceId = ui.deviceId,
             dbUrl = ui.dbUrl,
             onDismiss = { showSettings = false },
-            onSave = { id, url ->
-                vm.saveSettings(id, url)
+            onSave = { url ->
+                vm.saveSettings(url)
                 showSettings = false
             },
         )
@@ -311,8 +378,8 @@ fun RemoteScreen(vm: RemoteViewModel) {
                         .padding(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Button(onClick = { vm.saveScreenshot() }) { Text("Lưu ảnh") }
-                    OutlinedButton(onClick = { showFullImage = false }) { Text("Đóng") }
+                    ColorButton(onClick = { vm.saveScreenshot() }, color = ColGreen) { BtnText("Lưu ảnh") }
+                    ColorButton(onClick = { showFullImage = false }, color = Color.White, filled = false) { BtnText("Đóng") }
                 }
             }
         }
@@ -330,11 +397,11 @@ private fun TopSection(ui: UiState, onSettings: () -> Unit) {
             Column {
                 Text("TV Remote", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    if (ui.deviceId.isBlank()) "Chưa nhập mã TV" else "Mã TV: ${ui.deviceId}",
+                    if (ui.dbUrl.isBlank() || ui.dbUrl.contains("YOUR-PROJECT")) "Chưa nhập link Firebase" else "Đã cấu hình Firebase",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            OutlinedButton(onClick = onSettings) { Text("Cài đặt") }
+            ColorButton(onClick = onSettings, color = ColBlue, filled = false) { BtnText("Cài đặt") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusPill(
@@ -368,7 +435,11 @@ private fun StatusPill(text: String, color: Color) {
 
 @Composable
 private fun SectionCard(title: String, content: @Composable () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -381,12 +452,10 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
 
 @Composable
 private fun SettingsDialog(
-    deviceId: String,
     dbUrl: String,
     onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit,
+    onSave: (String) -> Unit,
 ) {
-    var id by remember { mutableStateOf(deviceId) }
     var url by remember { mutableStateOf(dbUrl) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -394,24 +463,18 @@ private fun SettingsDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Mã TV hiển thị trong màn hình cài đặt ẩn trên TV (bấm phím Menu 5 lần).",
+                    "Dán link Firebase Realtime Database (cùng link đã đặt trong app TV).",
                     style = MaterialTheme.typography.bodySmall,
-                )
-                OutlinedTextField(
-                    value = id,
-                    onValueChange = { id = it },
-                    label = { Text("Mã TV (device_id)") },
-                    singleLine = true,
                 )
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("URL Firebase Realtime Database") },
+                    label = { Text("Link Firebase") },
                     singleLine = true,
                 )
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(id, url) }) { Text("Lưu") } },
+        confirmButton = { TextButton(onClick = { onSave(url) }) { Text("Lưu") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Đóng") } },
     )
 }

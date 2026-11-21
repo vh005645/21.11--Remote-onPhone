@@ -56,6 +56,8 @@ data class UiState(
 
 class RemoteViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
+        // Mã thiết bị cố định - phải trùng với RemoteConfig.DEVICE_ID bên app TV
+        const val DEFAULT_DEVICE_ID = "246500068385"
         const val DEFAULT_DB_URL = "https://YOUR-PROJECT-default-rtdb.firebaseio.com"
         private const val ONLINE_WINDOW_MS = 100_000L
     }
@@ -64,7 +66,7 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _ui = MutableStateFlow(
         UiState(
-            deviceId = prefs.getString("device_id", "") ?: "",
+            deviceId = DEFAULT_DEVICE_ID,
             dbUrl = prefs.getString("db_url", DEFAULT_DB_URL) ?: DEFAULT_DB_URL,
             selMinutes = prefs.getInt("sel_minutes", 30),
             selAction = prefs.getString("sel_action", "LOCK_NOW") ?: "LOCK_NOW",
@@ -148,11 +150,10 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------------ cài đặt
 
-    fun saveSettings(deviceId: String, dbUrl: String) {
-        val id = deviceId.trim().uppercase()
+    fun saveSettings(dbUrl: String) {
         val url = dbUrl.trim().trimEnd('/')
-        prefs.edit().putString("device_id", id).putString("db_url", url).apply()
-        _ui.update { it.copy(deviceId = id, dbUrl = url, status = null, tvOnline = false, lastResult = "") }
+        prefs.edit().putString("db_url", url).apply()
+        _ui.update { it.copy(dbUrl = url, status = null, tvOnline = false, lastResult = "") }
         viewModelScope.launch { refresh() }
     }
 
@@ -187,7 +188,7 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val st = _ui.value
             if (!ready(st)) {
-                toast("Hãy nhập mã TV và URL Firebase (nút Cài đặt)")
+                toast("Hãy nhập link Firebase (nút Cài đặt)")
                 return@launch
             }
             val ok = TvApi(st.dbUrl).put("devices/${st.deviceId}/command", commandJson(action, payload))
@@ -232,7 +233,7 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val st = _ui.value
             if (!ready(st)) {
-                toast("Hãy nhập mã TV và URL Firebase (nút Cài đặt)")
+                toast("Hãy nhập link Firebase (nút Cài đặt)")
                 return@launch
             }
             if (st.screenshotLoading) return@launch
