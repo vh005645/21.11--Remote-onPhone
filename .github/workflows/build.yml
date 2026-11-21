@@ -1,0 +1,113 @@
+name: Build TV Remote Mobile APK
+
+# App này KHÁC app TV Launcher:
+# - TV Launcher: Java thuần, KHÔNG Gradle -> build bằng aapt2 + javac + d8
+# - App này: Kotlin + Jetpack Compose, CÓ Gradle -> PHẢI build bằng Gradle, không dùng aapt2 được
+# Các lỗi đã rút kinh nghiệm từ TV Launcher vẫn giữ nguyên:
+# 1. Không dùng setup-android / tools package (hay lỗi) -> dùng SDK có sẵn + sdkmanager
+# 2. Không dùng file .exe, không hard-code SDK Windows -> dùng $ANDROID_HOME
+# 3. Không hard-code cd tv_launcher / tv_remote_mobile -> tự tìm thư mục chứa settings.gradle.kts
+# 4. LỖI MỚI của app này: trong zip KHÔNG có file gradlew + gradle/wrapper/ -> phải cài Gradle 8.7 bằng action, không chạy ./gradlew được
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK packages
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          # App này compileSdk 34 (AGP 8.5.2), cài thêm 35 để dự phòng
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Detect project dir
+        run: |
+          echo "=== Repo layout (root) ==="
+          ls -la
+          echo "=== Tim settings.gradle.kts / gradlew ==="
+          find . -maxdepth 4 -name "settings.gradle*" -not -path "./.git/*" | head -n 20
+          find . -maxdepth 4 -name "gradlew" -not -path "./.git/*" | head -n 20
+          find . -maxdepth 4 -name "build.gradle*" -not -path "./.git/*" | head -n 20
+
+          PROJECT_DIR="."
+          if [ -f "settings.gradle.kts" ] || [ -f "settings.gradle" ]; then
+            PROJECT_DIR="."
+          elif [ -f "tv_remote_mobile/settings.gradle.kts" ]; then
+            PROJECT_DIR="tv_remote_mobile"
+          elif [ -f "app/settings.gradle.kts" ]; then
+            PROJECT_DIR="app"
+          else
+            # Tim file settings.gradle.kts o dau thi lay thu muc cha cua no
+            FOUND=$(find . -maxdepth 4 -name "settings.gradle.kts" -not -path "./.git/*" | head -n 1)
+            if [ -n "$FOUND" ]; then
+              PROJECT_DIR=$(dirname "$FOUND")
+            fi
+          fi
+          PROJECT_DIR="${PROJECT_DIR#./}"
+          if [ -z "$PROJECT_DIR" ]; then PROJECT_DIR="."; fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Detected PROJECT_DIR=$PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+          ls -la "$PROJECT_DIR/app" 2>/dev/null || true
+          echo "--- gradle wrapper? ---"
+          ls -la "$PROJECT_DIR/gradlew" 2>/dev/null || echo "KHONG CO gradlew (se dung Gradle 8.7 cai san)"
+
+      # App này thiếu gradlew + gradle/wrapper/ trong zip, nên phải cài Gradle sẵn.
+      # AGP 8.5.2 yêu cầu Gradle 8.7 - đúng bản này mới build được.
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Build APK (Debug)
+        run: |
+          set -euo pipefail
+          echo "Building in PROJECT_DIR=$PROJECT_DIR"
+          cd "$PROJECT_DIR"
+          # Nếu repo có gradlew thì ưu tiên dùng nó, nếu không thì dùng lệnh `gradle` vừa cài ở bước trên
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            GRADLE_CMD="./gradlew"
+          else
+            GRADLE_CMD="gradle"
+          fi
+          echo "GRADLE_CMD=$GRADLE_CMD"
+          $GRADLE_CMD --version
+          # App này chưa có signing config / keystore nên build Release sẽ fail.
+          # Build Debug là đủ để cài lên điện thoại test, Gradle tự ký bằng debug key.
+          $GRADLE_CMD assembleDebug --stacktrace
+          echo "=== APK tim thay ==="
+          find . -name "*.apk" -not -path "./.git/*" | head -n 20
+          ls -lh app/build/outputs/apk/debug/*.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv-remote-mobile-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Create Release (only on v* tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          generate_release_notes: true
