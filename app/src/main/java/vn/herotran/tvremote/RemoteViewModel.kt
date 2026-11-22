@@ -49,7 +49,9 @@ data class UiState(
     val lastResult: String = "",
     val screenshot: Bitmap? = null,
     val screenshotLoading: Boolean = false,
-    val selMinutes: Int = 30,
+    val minutesText: String = "",
+    val timerActive: Boolean = false,
+    val timerStartedAt: Long = 0,
     val selAction: String = "LOCK_NOW",
     val toast: String? = null,
 )
@@ -68,13 +70,14 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
         UiState(
             deviceId = DEFAULT_DEVICE_ID,
             dbUrl = prefs.getString("db_url", DEFAULT_DB_URL) ?: DEFAULT_DB_URL,
-            selMinutes = prefs.getInt("sel_minutes", 30),
+            minutesText = prefs.getString("minutes_text", "") ?: "",
             selAction = prefs.getString("sel_action", "LOCK_NOW") ?: "LOCK_NOW",
         )
     )
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
     private var pollJob: Job? = null
+    private var ignoreTvTimerUntil = 0L
 
     // ------------------------------------------------------------------ polling
 
@@ -109,13 +112,36 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
         }
         val status = parseStatus(statusBody)
         val result = api.get("$base/response/last_result")
+        val now = System.currentTimeMillis()
+        val online = status?.let { isOnline(it) } ?: false
+
+        var active = st.timerActive
+        var cancelNow = false
+        if (status != null) {
+            val tvScheduled = status.scheduleAt > now && now > ignoreTvTimerUntil
+            if (tvScheduled) {
+                active = true
+            } else if (active && online && now - st.timerStartedAt > 10_000L) {
+                active = false // TV báo không còn hẹn giờ (đã hết giờ hoặc bị hủy)
+            }
+            if (active && !online) {
+                active = false // TV tắt/offline: gửi lệnh hủy và trả nút về "Bắt đầu hẹn"
+                cancelNow = true
+            }
+        }
         _ui.update {
             it.copy(
                 status = status,
-                tvOnline = status?.let { s -> isOnline(s) } ?: false,
+                tvOnline = online,
                 netError = false,
                 lastResult = parseString(result),
+                timerActive = active,
             )
+        }
+        if (cancelNow) {
+            ignoreTvTimerUntil = now + 8000L
+            api.put("$base/command", commandJson("CANCEL_SCHEDULE", ""))
+            toast("TV offline - đã hủy hẹn giờ")
         }
     }
 
@@ -157,9 +183,10 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { refresh() }
     }
 
-    fun selectMinutes(m: Int) {
-        prefs.edit().putInt("sel_minutes", m).apply()
-        _ui.update { it.copy(selMinutes = m) }
+    fun setMinutesText(text: String) {
+        val t = text.filter { it.isDigit() }.take(4)
+        prefs.edit().putString("minutes_text", t).apply()
+        _ui.update { it.copy(minutesText = t) }
     }
 
     fun selectAction(a: String) {
@@ -184,20 +211,24 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
             .put("timestamp", System.currentTimeMillis())
             .toString()
 
-    fun send(action: String, payload: String = "", okMsg: String = "Đã gửi lệnh") {
-        viewModelScope.launch {
-            val st = _ui.value
-            if (!ready(st)) {
-                toast("Hãy nhập link Firebase (nút Cài đặt)")
-                return@launch
-            }
-            val ok = TvApi(st.dbUrl).put("devices/${st.deviceId}/command", commandJson(action, payload))
-            toast(if (ok) okMsg else "Không gửi được lệnh - kiểm tra mạng / URL Firebase")
-            if (ok) {
-                delay(1500)
-                refresh()
-            }
+    /** Gửi lệnh lên Firebase; trả về true nếu thành công. */
+    private suspend fun post(action: String, payload: String, okMsg: String): Boolean {
+        val st = _ui.value
+        if (!ready(st)) {
+            toast("Hãy nhập link Firebase (nút Cài đặt)")
+            return false
         }
+        val ok = TvApi(st.dbUrl).put("devices/${st.deviceId}/command", commandJson(action, payload))
+        toast(if (ok) okMsg else "Không gửi được lệnh - kiểm tra mạng / link Firebase")
+        if (ok) {
+            delay(1500)
+            refresh()
+        }
+        return ok
+    }
+
+    fun send(action: String, payload: String = "", okMsg: String = "Đã gửi lệnh") {
+        viewModelScope.launch { post(action, payload, okMsg) }
     }
 
     fun lock() = send("LOCK_NOW", okMsg = "Đã gửi lệnh khóa TV")
@@ -219,11 +250,27 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startSchedule() {
         val s = _ui.value
-        val payload = JSONObject().put("type", s.selAction).put("minutes", s.selMinutes).toString()
-        send("SCHEDULE_ACTION", payload, "Đã gửi lệnh hẹn giờ")
+        if (s.timerActive) return
+        val minutes = s.minutesText.toIntOrNull()
+        if (minutes == null || minutes < 1 || minutes > 1440) {
+            toast("Nhập số phút từ 1 đến 1440")
+            return
+        }
+        val payload = JSONObject().put("type", s.selAction).put("minutes", minutes).toString()
+        viewModelScope.launch {
+            ignoreTvTimerUntil = 0L
+            val ok = post("SCHEDULE_ACTION", payload, "Đã đặt hẹn giờ $minutes phút")
+            if (ok) {
+                _ui.update { it.copy(timerActive = true, timerStartedAt = System.currentTimeMillis()) }
+            }
+        }
     }
 
-    fun cancelSchedule() = send("CANCEL_SCHEDULE", okMsg = "Đã gửi lệnh hủy hẹn giờ")
+    fun cancelSchedule() {
+        ignoreTvTimerUntil = System.currentTimeMillis() + 8000L
+        _ui.update { it.copy(timerActive = false) }
+        send("CANCEL_SCHEDULE", okMsg = "Đã hủy hẹn giờ")
+    }
 
     fun hideImage() = send("HIDE_IMAGE", okMsg = "Đã gửi lệnh tắt ảnh")
 

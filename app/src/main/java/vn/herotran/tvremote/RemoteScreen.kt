@@ -4,6 +4,11 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -49,12 +55,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -113,6 +121,25 @@ private fun ColorButton(
             content = content,
         )
     }
+}
+
+@Composable
+private fun BlinkText(text: String) {
+    val transition = rememberInfiniteTransition(label = "blink")
+    val a by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.2f,
+        animationSpec = infiniteRepeatable(animation = tween(650), repeatMode = RepeatMode.Reverse),
+        label = "blinkAlpha",
+    )
+    Text(
+        text = text,
+        maxLines = 1,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.alpha(a),
+    )
 }
 
 @Composable
@@ -225,9 +252,9 @@ fun RemoteScreen(vm: RemoteViewModel) {
                     if (!dragging && st != null) sliderVal = st.volume.toFloat()
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    ColorButton(onClick = { vm.volDown() }, color = ColBlue, modifier = Modifier.weight(1f)) { BtnText("Giảm âm") }
+                    ColorButton(onClick = { vm.volUp() }, color = ColBlue, modifier = Modifier.weight(1f)) { BtnText("+ âm") }
+                    ColorButton(onClick = { vm.volDown() }, color = ColBlue, modifier = Modifier.weight(1f)) { BtnText("- âm") }
                     ColorButton(onClick = { vm.mute() }, color = ColPurple, modifier = Modifier.weight(1f)) { BtnText("Mute") }
-                    ColorButton(onClick = { vm.volUp() }, color = ColBlue, modifier = Modifier.weight(1f)) { BtnText("Tăng âm") }
                 }
                 Text("Âm lượng: ${sliderVal.roundToInt()}%", style = MaterialTheme.typography.bodyMedium)
                 Slider(
@@ -268,21 +295,16 @@ fun RemoteScreen(vm: RemoteViewModel) {
             // ---------------- Hẹn giờ
             SectionCard("Hẹn giờ tự động") {
                 Text(scheduleText(ui.status), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    listOf(15, 30, 45, 60).forEach { m ->
-                        ColorButton(
-                            onClick = { vm.selectMinutes(m) },
-                            color = ColTeal,
-                            filled = ui.selMinutes == m,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("$m", fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                                Text("min", fontSize = 12.sp, maxLines = 1)
-                            }
-                        }
-                    }
-                }
+                OutlinedTextField(
+                    value = ui.minutesText,
+                    onValueChange = { vm.setMinutesText(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = BtnShape,
+                    singleLine = true,
+                    enabled = !ui.timerActive,
+                    label = { Text("Số phút hẹn giờ") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     ColorButton(
                         onClick = { vm.selectAction("LOCK_NOW") },
@@ -298,7 +320,13 @@ fun RemoteScreen(vm: RemoteViewModel) {
                     ) { BtnText("Tắt TV") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    ColorButton(onClick = { vm.startSchedule() }, color = ColGreen, modifier = Modifier.weight(1f)) { BtnText("Bắt đầu hẹn giờ") }
+                    ColorButton(
+                        onClick = { if (!ui.timerActive) vm.startSchedule() },
+                        color = ColGreen,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        if (ui.timerActive) BlinkText("Đang hẹn giờ") else BtnText("Bắt đầu hẹn")
+                    }
                     ColorButton(onClick = { vm.cancelSchedule() }, color = ColRed, filled = false, modifier = Modifier.weight(1f)) { BtnText("Hủy hẹn giờ") }
                 }
             }
@@ -314,14 +342,6 @@ fun RemoteScreen(vm: RemoteViewModel) {
                 }
             }
 
-            // ---------------- Kết quả gần nhất
-            if (ui.lastResult.isNotEmpty()) {
-                Text(
-                    "Phản hồi từ TV: ${ui.lastResult}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                )
-            }
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -417,6 +437,13 @@ private fun TopSection(ui: UiState, onSettings: () -> Unit) {
                 StatusPill(text = "Lỗi mạng", color = Color(0xFFEF6C00))
             }
         }
+        if (ui.lastResult.isNotEmpty()) {
+            Text(
+                "Phản hồi từ TV: ${ui.lastResult}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f),
+            )
+        }
     }
 }
 
@@ -480,9 +507,9 @@ private fun SettingsDialog(
 }
 
 private fun scheduleText(st: TvStatus?): String {
-    if (st == null) return "Chưa có trạng thái từ TV"
+    if (st == null) return "Không hẹn giờ"
     val now = System.currentTimeMillis()
-    if (st.scheduleAt <= now) return "Không giới hạn thời gian xem TV"
+    if (st.scheduleAt <= now) return "Không hẹn giờ"
     val clock = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(st.scheduleAt))
     val verb = if (st.scheduleType == "POWER_OFF") "tắt" else "khóa"
     val left = ((st.scheduleAt - now) / 60000L).toInt() + 1
